@@ -1,0 +1,36 @@
+seed: 42
+
+model:
+  name: Qwen/Qwen3.5-0.8B
+
+data:
+  path: data/cube_in_cup
+  train_split: train
+  val_split: validation
+  target_names: [future_ur_q1, future_ur_q2, future_ur_q3, future_ur_q4, future_ur_q5, future_ur_q6, future_grip_pos]
+  prediction_horizon_steps: 1
+  batch_size: 1
+  num_workers: 4
+
+lora:
+  enabled: true
+  r: 8
+  alpha: 16
+  dropout: 0.0
+
+head:
+  dropout: 0.1
+
+optim:
+  epochs: 5
+  lr_lora: 5.0e-5
+  lr_head: 5.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  grad_clip: 1.0
+  grad_accum_steps: 8
+
+logging:
+  log_every: 10
+  eval_every: 100
+  save_every: 100

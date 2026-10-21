@@ -1,0 +1,37 @@
+# Robot action-outcome prediction with the Qwen3.5-0.8B vision-language backbone.
+seed: 0
+
+model:
+  name: Qwen/Qwen3.5-0.8B
+
+data:
+  path: data/robot
+  train_split: smoke
+  val_split: null
+  target_names: [progress, collision_risk, success]
+  prediction_horizon_steps: 10
+  batch_size: 1
+  num_workers: 4
+
+lora:
+  enabled: true
+  r: 8
+  alpha: 16
+  dropout: 0.0
+
+head:
+  dropout: 0.1
+
+optim:
+  epochs: 3
+  lr_lora: 1.0e-4
+  lr_head: 1.0e-3
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  grad_clip: 1.0
+  grad_accum_steps: 1
+
+logging:
+  log_every: 20
+  eval_every: 500
+  save_every: 500
