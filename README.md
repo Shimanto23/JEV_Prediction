@@ -60,6 +60,8 @@ Install [uv](https://docs.astral.sh/uv/) and the locked training dependencies:
 uv sync
 ```
 
+`uv run` uses the project `.venv` (selected by `.python-version`). If you want to run inside a separately activated environment such as `jev`, use `uv run --active ...` or call `python ...` directly after activating it. The dependencies include Pillow and the TorchVision version compatible with PyTorch 2.14, required by Qwen's image processor.
+
 The first training run downloads the Qwen3.5-0.8B weights and processor. Training selects CUDA, Apple MPS, or CPU automatically. For an NVIDIA L40S, start with the provided small microbatches. `batch_size` counts dataset rows; `grad_accum_steps` controls the effective batch. Logs, validation metrics, and checkpoints are saved under `runs/<name>-<timestamp>/`.
 
 The startup script is for a fresh Ubuntu GPU machine:

@@ -7,8 +7,10 @@ requires-python = ">=3.10"
 dependencies = [
     "datasets>=5.0.1",
     "ipykernel>=7.3.0",
+    "pillow>=10.0.0",
     "peft>=0.21.0",
     "pyyaml>=6.0.3",
     "torch>=2.14.0",
+    "torchvision>=0.29.0",
     "transformers>=5.17.0",
 ]
