@@ -67,6 +67,8 @@ def train(config, run_name, resume=None):
     horizon = data["prediction_horizon_steps"]
 
     train_dataset = RobotDataset(dataset_path, data.get("train_split", "train"), target_names, horizon)
+    if len(train_dataset) == 0:
+        raise ValueError("Training split is empty")
     train_loader = make_loader(config, train_dataset, device, shuffle=True)
     val_dataset = None
     val_loader = None
@@ -103,7 +105,12 @@ def train(config, run_name, resume=None):
         {"params": network.head.parameters(), "lr": float(optim["lr_head"])},
     ], weight_decay=float(optim["weight_decay"]))
     accum = optim.get("grad_accum_steps", 1)
-    total_steps = optim["epochs"] * (len(train_loader) // accum)
+    if accum < 1:
+        raise ValueError("optim.grad_accum_steps must be at least 1")
+    steps_per_epoch = (len(train_loader) + accum - 1) // accum
+    total_steps = optim["epochs"] * steps_per_epoch
+    if total_steps < 1:
+        raise ValueError("Training configuration produces no optimizer steps")
     scheduler = get_cosine_schedule_with_warmup(
         optimizer, int(optim["warmup_ratio"] * total_steps), total_steps,
     )
@@ -118,21 +125,27 @@ def train(config, run_name, resume=None):
         accum_loss, accum_count = 0.0, 0
         optimizer.zero_grad()
         for micro, batch in enumerate(train_loader, 1):
-            if micro > (len(train_loader) // accum) * accum:
-                break
+            group_start = ((micro - 1) // accum) * accum
+            group_start_examples = group_start * data["batch_size"]
+            group_examples = min(
+                accum * data["batch_size"], len(train_dataset) - group_start_examples,
+            )
             batch = to_device(batch, device)
             targets = batch["targets"]
             with autocast(device):
                 predictions = network(**batch)
-                loss = F.smooth_l1_loss(predictions.float(), targets.float())
-            (loss / accum).backward()
+                per_example_loss = F.smooth_l1_loss(
+                    predictions.float(), targets.float(), reduction="none",
+                ).mean(dim=-1)
+                loss = per_example_loss.mean()
+            (per_example_loss.sum() / group_examples).backward()
 
             size = len(targets)
             epoch_loss += loss.item() * size
             epoch_count += size
             accum_loss += loss.item() * size
             accum_count += size
-            if micro % accum:
+            if micro % accum and micro != len(train_loader):
                 continue
 
             torch.nn.utils.clip_grad_norm_(network.parameters(), optim["grad_clip"])

@@ -1,8 +1,10 @@
 # Robot next-state prediction with Qwen3.5 Vision
 
-This project trains a non-autoregressive, action-conditioned robot state predictor. Given a camera image, task goal, current numeric robot state, and candidate action, it predicts the robot state after a fixed horizon. It does not generate actions or images; a separate controller or planner can compare predicted outcomes for candidate actions.
+This project trains an action-conditioned robot state-transition predictor. Given a camera image, task goal, current numeric robot state, and recorded or candidate action, it directly regresses the robot state after a fixed horizon. It does not generate actions or future images. The regression output is produced in one forward pass, without autoregressive token generation; the Qwen3.5 backbone itself is still a causal decoder model.
 
 The vision-language backbone is [`Qwen/Qwen3.5-0.8B`](https://huggingface.co/Qwen/Qwen3.5-0.8B). The model uses its multimodal processor for image and goal/action text, plus a learned fusion head for numeric state and action values.
+
+The included `arch.ipynb` demonstrates JEV-style choice isolation for Qwen3, but that packed-sequence attention-mask implementation is not used by the current Qwen3.5 trainer. Qwen3.5 has both full-attention and recurrent linear-attention layers ([Transformers architecture notes](https://huggingface.co/docs/transformers/model_doc/qwen3_5)), so the notebook mask cannot safely be assumed to isolate branches in every layer. Candidate actions are instead evaluated as independent batch rows by `predict_candidate_outcomes`; reordering the candidate list reorders predictions without letting candidates affect one another. This is a branch-isolated, JEV-inspired use of the predictor, not a direct port of the notebook's packed-sequence mechanism.
 
 ## Included Hugging Face robot dataset
 
@@ -11,12 +13,18 @@ The preparation script uses [`Bigenlight/cube_in_cup_lerobot_v3`](https://huggin
 Prepare the data on the GPU machine. The first run downloads the source dataset and decodes its camera video:
 
 ```bash
-uv run --with lerobot==0.6.1 python prepare_hf_robot_data.py
+uv run --isolated --no-project --python 3.12 --with 'lerobot[dataset]==0.6.1' python prepare_hf_robot_data.py
 ```
 
 The script saves a Hugging Face `DatasetDict` under `data/cube_in_cup/` with `train` and `validation` splits. Its table has an `image` feature, `goal`, `state`, `action`, seven named future-state columns, and episode/frame IDs. The split is by episode to reduce leakage. Each input at frame `t` is paired with the observed 7-D robot state at `t + 1` frame (about 33 ms at 30 fps). Targets remain in robot units: joint radians and gripper position.
 
-Train with LoRA:
+Before training, run a one-example preflight on the GPU host. This checks data loading, image processing, model loading, and the prediction output shape without updating weights:
+
+```bash
+uv run python preflight.py configs/hf_cube_in_cup_lora.yaml
+```
+
+Train with LoRA after preflight passes:
 
 ```bash
 uv run python train.py configs/hf_cube_in_cup_lora.yaml --name cube-in-cup
@@ -42,7 +50,7 @@ The dataset viewer can render the image column. The model reads `state` and `act
 
 Targets use Smooth L1 regression and can be continuous values in native units. Normalize target dimensions if they have very different scales, and keep the transform for deployment.
 
-One row represents an observed action and its later outcome. At runtime, `predict_outcomes` can be called for each candidate action, then a separate planner can apply its objective and safety constraints. Predictions for candidate actions unlike those represented in training data may not be reliable.
+One row represents a demonstrated action and its later outcome. It does not provide counterfactual outcomes for other actions from that exact same state. At runtime, `predict_candidate_outcomes` evaluates a list of candidate actions independently for the same image/state, then a separate planner can apply its objective and safety constraints. Candidate actions unlike those represented in training data may not be reliable. For a JEV experiment that learns comparisons among multiple options at one state, collect or simulate outcome labels for multiple actions from that same state.
 
 ## Setup and training
 
@@ -68,7 +76,7 @@ Evaluate a saved checkpoint on its validation split:
 uv run python inference.py runs/<run-id>/checkpoints/best
 ```
 
-It reports Smooth L1 loss, MAE, and RMSE for each target. The Python API `inference.predict_outcomes(...)` predicts target values for one image/state/action example.
+It reports Smooth L1 loss, MAE, and RMSE for each target, plus a persistence baseline when target dimensions match the current state (predicting no state change). The Python APIs `inference.predict_outcomes(...)` and `inference.predict_candidate_outcomes(...)` predict one action outcome or a list of candidate outcomes for a shared observation.
 
 ## Project files
 
@@ -77,5 +85,6 @@ It reports Smooth L1 loss, MAE, and RMSE for each target. The Python API `infere
 - [`tokenization.py`](tokenization.py): Qwen3.5 processor setup.
 - [`network.py`](network.py): image-text backbone, numeric feature fusion, and continuous prediction head.
 - [`train.py`](train.py): training, gradient accumulation, validation, and checkpoint initialization.
+- [`preflight.py`](preflight.py): one-example model/data compatibility check before training.
 - [`logger.py`](logger.py): metrics, run files, and LoRA/head checkpoints.
 - [`inference.py`](inference.py): evaluation and `predict_outcomes()`.

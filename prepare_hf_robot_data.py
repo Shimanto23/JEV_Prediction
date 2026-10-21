@@ -1,7 +1,7 @@
 """Build a column-based Hugging Face DatasetDict from a small LeRobot dataset.
 
 Install the LeRobot dataset decoder on demand with:
-  uv run --with lerobot==0.6.1 python prepare_hf_robot_data.py
+  uv run --isolated --no-project --python 3.12 --with 'lerobot[dataset]==0.6.1' python prepare_hf_robot_data.py
 """
 
 import argparse
@@ -58,7 +58,8 @@ def main():
     except ImportError as exc:
         raise SystemExit(
             "LeRobot is required to decode the Hub dataset. Run this script with "
-            "`uv run --with lerobot==0.6.1 python prepare_hf_robot_data.py`."
+            "`uv run --isolated --no-project --python 3.12 --with 'lerobot[dataset]==0.6.1' "
+            "python prepare_hf_robot_data.py`."
         ) from exc
 
     print(f"Loading {args.dataset} from Hugging Face (first run downloads the dataset)...")

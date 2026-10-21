@@ -29,6 +29,9 @@ def evaluate(network, dataloader, device, target_names):
     total_loss = 0.0
     absolute_error = torch.zeros(len(target_names), dtype=torch.float64)
     squared_error = torch.zeros(len(target_names), dtype=torch.float64)
+    persistence_absolute_error = torch.zeros(len(target_names), dtype=torch.float64)
+    persistence_squared_error = torch.zeros(len(target_names), dtype=torch.float64)
+    can_measure_persistence = True
     count = 0
 
     for batch in dataloader:
@@ -41,12 +44,22 @@ def evaluate(network, dataloader, device, target_names):
         total_loss += loss.item() * len(targets)
         absolute_error += errors.abs().sum(dim=0).cpu()
         squared_error += errors.square().sum(dim=0).cpu()
+        state = batch["robot_state"].float()
+        if state.shape[-1] != targets.shape[-1]:
+            can_measure_persistence = False
+        elif can_measure_persistence:
+            persistence_errors = state - targets.float()
+            persistence_absolute_error += persistence_errors.abs().sum(dim=0).cpu()
+            persistence_squared_error += persistence_errors.square().sum(dim=0).cpu()
         count += len(targets)
 
     metrics = {"loss": total_loss / count}
     for index, name in enumerate(target_names):
         metrics[f"mae_{name}"] = (absolute_error[index] / count).item()
         metrics[f"rmse_{name}"] = (squared_error[index] / count).sqrt().item()
+        if can_measure_persistence:
+            metrics[f"persistence_mae_{name}"] = (persistence_absolute_error[index] / count).item()
+            metrics[f"persistence_rmse_{name}"] = (persistence_squared_error[index] / count).sqrt().item()
     network.train()
     return metrics
 
@@ -67,6 +80,34 @@ def predict_outcomes(network, meta, image_path, state, action, goal, device):
     with autocast(device):
         values = network(**batch)[0].float().cpu().tolist()
     return dict(zip(meta["target_names"], values))
+
+
+@torch.no_grad()
+def predict_candidate_outcomes(network, meta, image_path, state, actions, goal, device):
+    """Predict one future outcome per candidate action for the same observation.
+
+    Each action is an independent batch branch. Therefore reordering candidates
+    only reorders outputs, including for Qwen3.5's recurrent attention layers.
+    """
+    actions = list(actions)
+    if not actions:
+        raise ValueError("actions must contain at least one candidate action")
+
+    examples = []
+    for action in actions:
+        examples.append({
+            "image_path": str(image_path),
+            "goal": goal,
+            "target_names": meta["target_names"],
+            "state": torch.tensor(state, dtype=torch.float32),
+            "action": torch.tensor(action, dtype=torch.float32),
+            "prediction_horizon_steps": meta["prediction_horizon_steps"],
+        })
+    batch = to_device(collate_fn(examples), device)
+    network.eval()
+    with autocast(device):
+        predictions = network(**batch).float().cpu().tolist()
+    return [dict(zip(meta["target_names"], row)) for row in predictions]
 
 
 def main():
